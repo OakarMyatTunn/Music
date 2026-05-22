@@ -408,6 +408,7 @@ export default function LyricMotion() {
   const [aiProvider, setAiProvider] = useState("claude"); // "claude" | "gemini"
   const [geminiKey, setGeminiKey] = useState("");
   const [videoSource, setVideoSource] = useState("pixabay"); // "pexels" | "pixabay"
+  const [exportFormat, setExportFormat] = useState("webm");
 
   const audioRef    = useRef(null);
   const videoRef    = useRef(null);
@@ -515,35 +516,82 @@ export default function LyricMotion() {
     setLyrics(prev => prev.map(l => l.id === lineId ? { ...l, timestamp: parseFloat(t.toFixed(1)) } : l));
   };
 
-  const handleRecord = () => {
+  const handleRecord = (format = exportFormat) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    if (isRecording) { mediaRecorderRef.current?.stop(); setIsRecording(false); return; }
-    const stream = canvas.captureStream(30);
-    const recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
-    chunksRef.current = [];
-    recorder.ondataavailable = e => chunksRef.current.push(e.data);
-    recorder.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: "video/webm" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob); a.download = "lyricmotion.webm"; a.click();
-      notify("Video downloaded ✓","success");
+
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+
+    // Build combined stream: canvas + audio
+    const canvasStream = canvas.captureStream(30);
+    const combinedStream = new MediaStream();
+
+    // Add video track
+    canvasStream.getVideoTracks().forEach(t => combinedStream.addTrack(t));
+
+    // Add audio track from MP3 if available
+    if (audioCtxRef.current && analyserRef.current) {
+      try {
+        const dest = audioCtxRef.current.createMediaStreamDestination();
+        analyserRef.current.connect(dest);
+        dest.stream.getAudioTracks().forEach(t => combinedStream.addTrack(t));
+      } catch(e) {
+        notify("Audio track unavailable — recording video only", "info");
+      }
+    }
+
+    // Pick mimeType based on format
+    const mimeMap = {
+      webm: "video/webm;codecs=vp9,opus",
+      mp4:  "video/mp4",
+      webm_vp8: "video/webm;codecs=vp8,opus",
     };
-    recorder.start(); mediaRecorderRef.current = recorder; setIsRecording(true);
-    notify("Recording... press Stop when done","info");
+    const mime = [mimeMap[format], "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
+      .find(m => MediaRecorder.isTypeSupported(m)) || "video/webm";
+
+    const recorder = new MediaRecorder(combinedStream, { mimeType: mime, videoBitsPerSecond: 8000000 });
+    chunksRef.current = [];
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+    recorder.onstop = () => {
+      const blob = new Blob(chunksRef.current, { type: mime });
+      const ext = mime.includes("mp4") ? "mp4" : "webm";
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `lyricmotion_${Date.now()}.${ext}`;
+      a.click();
+      notify(`✓ Downloaded as .${ext} with audio`, "success");
+    };
+
+    // Start audio playback + recording together
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(() => {});
+    }
+
+    recorder.start(100); // collect in 100ms chunks
+    mediaRecorderRef.current = recorder;
+    setIsRecording(true);
+    notify("⏺ Recording with audio... press Stop when done", "info");
   };
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     const onTime  = () => setCurrentTime(audio.currentTime);
+    const onLoad  = () => { if (!analyserRef.current) setupAnalyser(audio); };
     const onPlay  = () => { setIsPlaying(true); if (!analyserRef.current) setupAnalyser(audio); };
     const onPause = () => setIsPlaying(false);
     audio.addEventListener("timeupdate", onTime);
+    audio.addEventListener("canplay", onLoad);
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
     return () => {
       audio.removeEventListener("timeupdate", onTime);
+      audio.removeEventListener("canplay", onLoad);
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
     };
@@ -909,12 +957,50 @@ export default function LyricMotion() {
             )}
 
             {/* Export */}
-            <div style={{ marginTop:18,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center" }}>
-              <Btn onClick={handleRecord} colors={colors} variant={isRecording?"danger":"solid"}>
-                {isRecording?"⏹ Stop & Download":"⏺ Record & Export WebM"}
-              </Btn>
-              <div style={{ fontSize:12,color:"rgba(255,255,255,0.3)" }}>
-                Merge audio in CapCut for final TikTok/YouTube video
+            <div style={{ marginTop:18, padding:"16px", background:"rgba(255,255,255,0.03)", borderRadius:12, border:"1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:10,textTransform:"uppercase",letterSpacing:"1px" }}>
+                ⬇ Export Video with Audio
+              </div>
+
+              {/* Format selector */}
+              <div style={{ display:"flex",gap:8,marginBottom:14,flexWrap:"wrap" }}>
+                {[
+                  { id:"webm", label:"WebM", sub:"Best quality · Smaller file", emoji:"🌐" },
+                  { id:"mp4",  label:"MP4",  sub:"Wide compatibility · TikTok/YT", emoji:"🎬" },
+                ].map(opt => (
+                  <label key={opt.id} style={{
+                    flex:1, padding:"10px 14px", borderRadius:10, cursor:"pointer",
+                    background:exportFormat===opt.id?`${colors.primary}20`:"rgba(255,255,255,0.04)",
+                    border:`2px solid ${exportFormat===opt.id?colors.primary:"rgba(255,255,255,0.1)"}`,
+                    transition:"all 0.15s", minWidth:120,
+                  }}>
+                    <input type="radio" value={opt.id} checked={exportFormat===opt.id}
+                      onChange={()=>setExportFormat(opt.id)} style={{ display:"none" }} />
+                    <div style={{ fontWeight:700,fontSize:14,color:exportFormat===opt.id?colors.accent:"rgba(255,255,255,0.7)" }}>
+                      {opt.emoji} {opt.label}
+                    </div>
+                    <div style={{ fontSize:11,color:"rgba(255,255,255,0.4)",marginTop:2 }}>{opt.sub}</div>
+                  </label>
+                ))}
+              </div>
+
+              {/* Record button */}
+              <div style={{ display:"flex",gap:10,alignItems:"center",flexWrap:"wrap" }}>
+                <Btn onClick={() => handleRecord(exportFormat)} colors={colors} variant={isRecording?"danger":"solid"}>
+                  {isRecording ? "⏹ Stop & Save" : `⏺ Record & Export ${exportFormat.toUpperCase()} with Audio`}
+                </Btn>
+                {isRecording && (
+                  <div style={{ fontSize:12,color:colors.accent,animation:"pulse 1s infinite" }}>
+                    🔴 Recording in progress...
+                  </div>
+                )}
+              </div>
+
+              {/* Telegram note */}
+              <div style={{ marginTop:12, padding:"10px 14px", background:"rgba(255,255,255,0.04)", borderRadius:8, fontSize:12, color:"rgba(255,255,255,0.4)", lineHeight:1.6 }}>
+                💡 <strong style={{ color:"rgba(255,255,255,0.6)" }}>Audio included</strong> — video and music are merged in one file.<br/>
+                Ready to upload directly to <strong style={{ color:"rgba(255,255,255,0.6)" }}>TikTok, YouTube, or Telegram</strong>.<br/>
+                <span style={{ opacity:0.6 }}>Note: MP4 export depends on browser support. Use WebM if MP4 fails.</span>
               </div>
             </div>
           </Section>

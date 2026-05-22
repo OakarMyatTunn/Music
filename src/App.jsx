@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { fetchFile, toBlobURL } from "@ffmpeg/util";
 
 // ── Hardcoded API Keys ─────────────────────────────────────────────────────
 const KEYS = {
@@ -408,7 +410,10 @@ export default function LyricMotion() {
   const [aiProvider, setAiProvider] = useState("claude"); // "claude" | "gemini"
   const [geminiKey, setGeminiKey] = useState("");
   const [videoSource, setVideoSource] = useState("pixabay"); // "pexels" | "pixabay"
-  const [exportFormat, setExportFormat] = useState("webm");
+  const [exportFormat, setExportFormat] = useState("mp4");
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportStage, setExportStage] = useState("");
 
   const audioRef    = useRef(null);
   const videoRef    = useRef(null);
@@ -417,6 +422,8 @@ export default function LyricMotion() {
   const audioCtxRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const chunksRef   = useRef([]);
+  const ffmpegRef   = useRef(null);
+  const ffmpegReady = useRef(false);
 
   const notify = (msg, type="info") => {
     setNotification({ msg, type });
@@ -514,6 +521,136 @@ export default function LyricMotion() {
     if (!timingMode) return;
     const t = audioRef.current?.currentTime || currentTime;
     setLyrics(prev => prev.map(l => l.id === lineId ? { ...l, timestamp: parseFloat(t.toFixed(1)) } : l));
+  };
+
+  // ── FFmpeg loader ───────────────────────────────────────────────────────
+  const loadFFmpeg = async () => {
+    if (ffmpegReady.current) return ffmpegRef.current;
+    setExportStage("Loading FFmpeg engine (~30MB first time)...");
+    const ffmpeg = new FFmpeg();
+    ffmpeg.on("progress", ({ progress }) => {
+      setExportProgress(Math.round(progress * 100));
+    });
+    const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm";
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+    });
+    ffmpegRef.current = ffmpeg;
+    ffmpegReady.current = true;
+    return ffmpeg;
+  };
+
+  // ── Offline render: capture frames → FFmpeg → MP4/WebM ──────────────────
+  const handleOfflineExport = async () => {
+    if (!audioSrc) { notify("Please load an MP3 file first for offline export", "error"); return; }
+    if (isExporting) return;
+
+    const canvas = canvasRef.current;
+    const audio  = audioRef.current;
+    if (!canvas || !audio) return;
+
+    setIsExporting(true);
+    setExportProgress(0);
+
+    try {
+      // 1. Load FFmpeg
+      const ffmpeg = await loadFFmpeg();
+
+      // 2. Get audio duration
+      const duration = audio.duration || 60;
+      const FPS = 24;
+      const totalFrames = Math.ceil(duration * FPS);
+
+      // 3. Capture frames by scrubbing through time
+      setExportStage(`Rendering ${totalFrames} frames...`);
+      const frames = [];
+
+      for (let i = 0; i < totalFrames; i++) {
+        // Update currentTime so canvas draws correct lyric
+        const t = i / FPS;
+        setCurrentTime(t);
+        // Wait one animation frame for canvas to redraw
+        await new Promise(r => requestAnimationFrame(r));
+        await new Promise(r => setTimeout(r, 0));
+
+        // Capture canvas as PNG blob
+        const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+        const arr  = new Uint8Array(await blob.arrayBuffer());
+        const fname = `frame${String(i).padStart(5,"0")}.png`;
+        await ffmpeg.writeFile(fname, arr);
+        frames.push(fname);
+
+        if (i % 10 === 0) {
+          setExportProgress(Math.round((i / totalFrames) * 60));
+          setExportStage(`Capturing frames... ${i}/${totalFrames}`);
+        }
+      }
+
+      // 4. Write audio file
+      setExportStage("Processing audio...");
+      setExportProgress(62);
+      const audioData = await fetchFile(audioSrc);
+      await ffmpeg.writeFile("audio.mp3", audioData);
+
+      // 5. Run FFmpeg to merge frames + audio
+      setExportStage("Merging video and audio...");
+      setExportProgress(65);
+
+      const outFile = exportFormat === "mp4" ? "output.mp4" : "output.webm";
+      const ffmpegArgs = exportFormat === "mp4"
+        ? [
+            "-framerate", `${FPS}`,
+            "-i", "frame%05d.png",
+            "-i", "audio.mp3",
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            "-pix_fmt", "yuv420p",
+            "-shortest",
+            "-movflags", "+faststart",
+            outFile,
+          ]
+        : [
+            "-framerate", `${FPS}`,
+            "-i", "frame%05d.png",
+            "-i", "audio.mp3",
+            "-c:v", "libvpx-vp9",
+            "-c:a", "libopus",
+            "-shortest",
+            outFile,
+          ];
+
+      await ffmpeg.exec(ffmpegArgs);
+      setExportProgress(95);
+
+      // 6. Read output and download
+      setExportStage("Finalizing...");
+      const data = await ffmpeg.readFile(outFile);
+      const blob = new Blob([data.buffer], { type: exportFormat === "mp4" ? "video/mp4" : "video/webm" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url;
+      a.download = `LyricMotion_${Date.now()}.${exportFormat}`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      // 7. Cleanup
+      for (const f of frames) { try { await ffmpeg.deleteFile(f); } catch(_) {} }
+      try { await ffmpeg.deleteFile("audio.mp3"); } catch(_) {}
+      try { await ffmpeg.deleteFile(outFile); } catch(_) {}
+
+      setExportProgress(100);
+      setExportStage("");
+      notify(`✓ Exported ${exportFormat.toUpperCase()} with audio — ready for TikTok/YouTube/Telegram!`, "success");
+
+    } catch(e) {
+      console.error(e);
+      notify(`Export failed: ${e.message}`, "error");
+      setExportStage("");
+    }
+
+    setIsExporting(false);
+    setExportProgress(0);
   };
 
   const handleRecord = (format = exportFormat) => {
@@ -957,16 +1094,16 @@ export default function LyricMotion() {
             )}
 
             {/* Export */}
-            <div style={{ marginTop:18, padding:"16px", background:"rgba(255,255,255,0.03)", borderRadius:12, border:"1px solid rgba(255,255,255,0.08)" }}>
-              <div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:10,textTransform:"uppercase",letterSpacing:"1px" }}>
+            <div style={{ marginTop:18, padding:"18px", background:"rgba(255,255,255,0.03)", borderRadius:12, border:"1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:12,textTransform:"uppercase",letterSpacing:"1px" }}>
                 ⬇ Export Video with Audio
               </div>
 
               {/* Format selector */}
               <div style={{ display:"flex",gap:8,marginBottom:14,flexWrap:"wrap" }}>
                 {[
-                  { id:"webm", label:"WebM", sub:"Best quality · Smaller file", emoji:"🌐" },
-                  { id:"mp4",  label:"MP4",  sub:"Wide compatibility · TikTok/YT", emoji:"🎬" },
+                  { id:"mp4",  label:"MP4",  sub:"TikTok · YouTube · Telegram", emoji:"🎬" },
+                  { id:"webm", label:"WebM", sub:"Smaller file · Web ready", emoji:"🌐" },
                 ].map(opt => (
                   <label key={opt.id} style={{
                     flex:1, padding:"10px 14px", borderRadius:10, cursor:"pointer",
@@ -984,23 +1121,31 @@ export default function LyricMotion() {
                 ))}
               </div>
 
-              {/* Record button */}
-              <div style={{ display:"flex",gap:10,alignItems:"center",flexWrap:"wrap" }}>
-                <Btn onClick={() => handleRecord(exportFormat)} colors={colors} variant={isRecording?"danger":"solid"}>
-                  {isRecording ? "⏹ Stop & Save" : `⏺ Record & Export ${exportFormat.toUpperCase()} with Audio`}
-                </Btn>
-                {isRecording && (
-                  <div style={{ fontSize:12,color:colors.accent,animation:"pulse 1s infinite" }}>
-                    🔴 Recording in progress...
-                  </div>
-                )}
-              </div>
+              {/* Offline export button — PRIMARY */}
+              <Btn onClick={handleOfflineExport} colors={colors} disabled={isExporting || !audioSrc} variant="solid">
+                {isExporting ? `⏳ Exporting...` : `🎬 Export ${exportFormat.toUpperCase()} with Audio (No Playback)`}
+              </Btn>
 
-              {/* Telegram note */}
-              <div style={{ marginTop:12, padding:"10px 14px", background:"rgba(255,255,255,0.04)", borderRadius:8, fontSize:12, color:"rgba(255,255,255,0.4)", lineHeight:1.6 }}>
-                💡 <strong style={{ color:"rgba(255,255,255,0.6)" }}>Audio included</strong> — video and music are merged in one file.<br/>
-                Ready to upload directly to <strong style={{ color:"rgba(255,255,255,0.6)" }}>TikTok, YouTube, or Telegram</strong>.<br/>
-                <span style={{ opacity:0.6 }}>Note: MP4 export depends on browser support. Use WebM if MP4 fails.</span>
+              {/* Progress bar */}
+              {isExporting && (
+                <div style={{ marginTop:12 }}>
+                  <div style={{ fontSize:12,color:colors.accent,marginBottom:6 }}>{exportStage}</div>
+                  <div style={{ background:"rgba(255,255,255,0.08)",borderRadius:99,height:8,overflow:"hidden" }}>
+                    <div style={{
+                      width:`${exportProgress}%`, height:"100%", borderRadius:99,
+                      background:`linear-gradient(90deg,${colors.primary},${colors.accent})`,
+                      transition:"width 0.3s ease",
+                    }}/>
+                  </div>
+                  <div style={{ fontSize:11,color:"rgba(255,255,255,0.4)",marginTop:4 }}>{exportProgress}%</div>
+                </div>
+              )}
+
+              <div style={{ marginTop:12, padding:"10px 14px", background:"rgba(255,255,255,0.04)", borderRadius:8, fontSize:12, color:"rgba(255,255,255,0.4)", lineHeight:1.7 }}>
+                💡 <strong style={{ color:"rgba(255,255,255,0.6)" }}>No playback needed</strong> — renders all frames silently via FFmpeg.<br/>
+                Audio + animation merged into one file.<br/>
+                Ready to upload to <strong style={{ color:"rgba(255,255,255,0.6)" }}>TikTok · YouTube · Telegram</strong>.<br/>
+                <span style={{ opacity:0.6 }}>First export loads FFmpeg (~30MB). Subsequent exports are instant.</span>
               </div>
             </div>
           </Section>

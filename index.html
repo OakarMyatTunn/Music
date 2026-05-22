@@ -2,12 +2,24 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="/Music/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LyricMotion — Animated Music Video Generator</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet" />
+    <script>
+      // Register COI service worker for SharedArrayBuffer (required by FFmpeg.wasm)
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/Music/coi-serviceworker.js').then(reg => {
+            if (reg.active && !navigator.serviceWorker.controller) {
+              window.location.reload();
+            }
+          });
+        });
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

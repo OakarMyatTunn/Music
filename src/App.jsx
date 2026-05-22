@@ -154,43 +154,67 @@ async function callGemini(prompt, apiKey) {
         }
       );
       const data = await res.json();
+      const errMsg = data.error?.message || "";
+      const errStatus = data.error?.status || "";
+      const errCode = data.error?.code || res.status;
+      // Skip model if quota/rate limit hit
+      const isQuota = errCode === 429 || errStatus === "RESOURCE_EXHAUSTED"
+        || errMsg.includes("quota") || errMsg.includes("RESOURCE_EXHAUSTED")
+        || errMsg.includes("rate") || errMsg.includes("limit");
       if (!res.ok) {
-        // If quota exceeded, try next model
-        if (data.error?.code === 429 || data.error?.status === "RESOURCE_EXHAUSTED") {
-          lastError = `${model} quota exceeded`;
-          continue;
-        }
-        throw new Error(data.error?.message || `Gemini error on ${model}`);
+        if (isQuota) { lastError = `${model}: quota exceeded`; continue; }
+        // Model not found / not available — skip silently
+        if (errCode === 404 || errCode === 400) { lastError = `${model}: not available`; continue; }
+        throw new Error(errMsg || `Gemini error on ${model}`);
       }
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) return text;
+      // Empty response — try next
+      lastError = `${model}: empty response`;
+      continue;
     } catch(e) {
-      if (e.message?.includes("quota") || e.message?.includes("RESOURCE_EXHAUSTED")) {
-        lastError = e.message;
-        continue;
+      const msg = e.message || "";
+      if (msg.includes("quota") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("rate") || msg.includes("429")) {
+        lastError = msg; continue;
+      }
+      if (msg.includes("404") || msg.includes("not found") || msg.includes("400")) {
+        lastError = msg; continue;
       }
       throw e;
     }
   }
-  throw new Error(`All Gemini models quota exceeded. ${lastError}`);
+  throw new Error(`GEMINI_ALL_FAILED`);
 }
 
-async function callAI(prompt, aiProvider, geminiKey) {
-  const raw = aiProvider === "gemini"
-    ? await callGemini(prompt, geminiKey)
-    : await callClaude(prompt);
+async function callAI(prompt, aiProvider, geminiKey, onFallback) {
+  let raw;
+  if (aiProvider === "gemini") {
+    try {
+      raw = await callGemini(prompt, geminiKey);
+    } catch(e) {
+      if (e.message === "GEMINI_ALL_FAILED") {
+        // Auto-fallback to Claude
+        if (onFallback) onFallback("All Gemini models quota exceeded — falling back to Claude ✓");
+        raw = await callClaude(prompt);
+      } else {
+        throw e;
+      }
+    }
+  } else {
+    raw = await callClaude(prompt);
+  }
   return raw.replace(/```json|```/g, "").trim();
 }
 
-async function translateLyrics(lines, targetLangs, mood, originalLang, aiProvider, geminiKey) {
+async function translateLyrics(lines, targetLangs, mood, originalLang, aiProvider, geminiKey, onFallback) {
   const lyricsText = lines.map((l, i) => `${i + 1}. ${l.original}`).join("\n");
   const langNames  = targetLangs.map(c => LANGUAGES.find(l => l.code === c)?.label).join(", ");
-  const raw = await callAI(TRANSLATE_PROMPT(lyricsText, langNames, mood, originalLang), aiProvider, geminiKey);
+  const raw = await callAI(TRANSLATE_PROMPT(lyricsText, langNames, mood, originalLang), aiProvider, geminiKey, onFallback);
   try { return JSON.parse(raw); } catch { return []; }
 }
 
-async function detectLanguage(text, aiProvider, geminiKey) {
-  const raw = await callAI(DETECT_PROMPT(text), aiProvider, geminiKey);
+async function detectLanguage(text, aiProvider, geminiKey, onFallback) {
+  const raw = await callAI(DETECT_PROMPT(text), aiProvider, geminiKey, onFallback);
   try { return JSON.parse(raw); } catch { return { language: "Unknown", code: "?", mood: "default" }; }
 }
 
@@ -434,7 +458,7 @@ export default function LyricMotion() {
     setIsDetecting(true);
     try {
       const parsed = parseLyrics(lyricsRaw);
-      const langInfo = await detectLanguage(lyricsRaw, aiProvider, geminiKey);
+      const langInfo = await detectLanguage(lyricsRaw, aiProvider, geminiKey, (msg) => notify(msg, "info"));
       setDetectedLang(langInfo);
       setMood(langInfo.mood || detectMoodLocally(lyricsRaw));
       setLyrics(parsed);
@@ -455,7 +479,7 @@ export default function LyricMotion() {
     if (aiProvider === "gemini" && !geminiKey.trim()) { notify("Enter your Gemini API key", "error"); return; }
     setIsTranslating(true);
     try {
-      const results = await translateLyrics(lyrics, selectedLangs, mood, detectedLang?.language, aiProvider, geminiKey);
+      const results = await translateLyrics(lyrics, selectedLangs, mood, detectedLang?.language, aiProvider, geminiKey, (msg) => notify(msg, "info"));
       setLyrics(prev => prev.map((line, i) => {
         const found = results.find(r => r.line === i+1);
         return { ...line, translated: found?.translations || {} };

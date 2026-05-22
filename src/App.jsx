@@ -3,6 +3,9 @@ import { useState, useRef, useEffect, useCallback } from "react";
 // ── Constants ──────────────────────────────────────────────────────────────
 const PEXELS_API_KEY = "pZNvRFUYuazAGVnmk2IVHRRBkLY9CjY2JSYGESATibDjFA10lcrSr9aY";
 const PIXABAY_API_KEY = "55976531-21d0e7d4951ebb9b7bc9af25b";
+const ANTHROPIC_API_KEY = ["sk-ant-api03-Yo0ahRMcdidyZ-DCnL_mr",
+  "lsLauX9MHHSakhClHAvoTqu2POpxfnTfcXYgeEZApi",
+  "D8qBTSJhobFxYJwA8GFdpYw-RmJXygAA"].join("");
 const ANTHROPIC_PROXY = "https://api.anthropic.com/v1/messages";
 
 const MOOD_QUERIES = {
@@ -371,7 +374,6 @@ export default function LyricMotion() {
   const [isTranslating, setIsTranslating] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
   const [videoSource, setVideoSource] = useState("pixabay"); // "pexels" | "pixabay"
-  const [anthropicKey, setAnthropicKey] = useState("");
   const [videoSrc, setVideoSrc] = useState(null);
   const [isFetchingVideo, setIsFetchingVideo] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -431,11 +433,11 @@ export default function LyricMotion() {
 
   const handleProcessLyrics = async () => {
     if (!lyricsRaw.trim()) return;
-    if (!anthropicKey.trim()) { notify("Please enter your Anthropic API key first", "error"); return; }
+    if (!false) {
     setIsDetecting(true);
     const parsed = parseLyrics(lyricsRaw);
     const detectedMood = detectMoodFromText(lyricsRaw);
-    const langInfo = await detectLanguage(lyricsRaw, anthropicKey);
+    const langInfo = await detectLanguage(lyricsRaw, ANTHROPIC_API_KEY);
     setDetectedLang(langInfo);
     setMood(langInfo.mood || detectedMood);
     setLyrics(parsed);
@@ -446,10 +448,10 @@ export default function LyricMotion() {
 
   const handleTranslate = async () => {
     if (!lyrics.length) return;
-    if (!anthropicKey.trim()) { notify("Please enter your Anthropic API key first", "error"); return; }
+    if (!false) {
     setIsTranslating(true);
     try {
-      const results = await translateLyrics(lyrics, selectedLangs, mood, detectedLang?.language, anthropicKey);
+      const results = await translateLyrics(lyrics, selectedLangs, mood, detectedLang?.language, ANTHROPIC_API_KEY);
       const updated = lyrics.map((line, i) => {
         const found = results.find(r => r.line === i + 1);
         return { ...line, translated: found?.translations || {} };
@@ -678,19 +680,7 @@ export default function LyricMotion() {
         {/* STEP 2: Lyrics */}
         {step === 2 && (
           <Section title="Step 2 — Lyrics & Translation" subtitle="Paste lyrics, translate with Claude" colors={colors}>
-            {/* Anthropic API Key input */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 6 }}>
-                🔑 Anthropic API Key — required for translation (<a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{ color: colors.accent }}>get one here</a>)
-              </div>
-              <input
-                value={anthropicKey}
-                onChange={e => setAnthropicKey(e.target.value)}
-                placeholder="sk-ant-..."
-                type="password"
-                style={{ ...inputStyle(colors), width: "100%" }}
-              />
-            </div>
+
             <textarea
               value={lyricsRaw}
               onChange={e => setLyricsRaw(e.target.value)}

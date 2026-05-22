@@ -118,13 +118,27 @@ async function callClaude(prompt) {
   return data.content?.[0]?.text || "";
 }
 
-// Gemini model fallback chain — tries each model in order
+// Gemini model fallback chain — all available models ordered by capability
 const GEMINI_MODELS = [
+  // 2.5 family (best quality)
   "gemini-2.5-flash-preview-05-20",
   "gemini-2.5-flash",
-  "gemini-1.5-flash",
-  "gemini-2.0-flash-lite",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-pro",
+  // 2.0 family
   "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
+  // 1.5 family (most generous free quota)
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-latest",
+  "gemini-1.5-flash-8b",
+  "gemini-1.5-pro",
+  // 3.x family
+  "gemini-3.5-flash",
+  "gemini-3-flash",
+  "gemini-3.1-flash",
+  "gemini-3.1-flash-lite",
+  "gemini-3.1-pro",
 ];
 
 async function callGemini(prompt, apiKey) {
@@ -551,7 +565,7 @@ export default function LyricMotion() {
             style={{ ...inputStyle(), width: "100%", boxSizing: "border-box" }}
           />
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 6 }}>
-            ℹ Auto-tries: Gemini 2.5 Flash → 1.5 Flash → 2.0 Flash Lite → 2.0 Flash (quota fallback)
+            ℹ Auto-tries all available Gemini models (2.5 → 2.0 → 1.5 → 3.x) — skips any that hit quota
           </div>
         </div>
       )}

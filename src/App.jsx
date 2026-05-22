@@ -118,18 +118,47 @@ async function callClaude(prompt) {
   return data.content?.[0]?.text || "";
 }
 
+// Gemini model fallback chain — tries each model in order
+const GEMINI_MODELS = [
+  "gemini-2.5-flash-preview-05-20",
+  "gemini-2.5-flash",
+  "gemini-1.5-flash",
+  "gemini-2.0-flash-lite",
+  "gemini-2.0-flash",
+];
+
 async function callGemini(prompt, apiKey) {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+  let lastError = null;
+  for (const model of GEMINI_MODELS) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        // If quota exceeded, try next model
+        if (data.error?.code === 429 || data.error?.status === "RESOURCE_EXHAUSTED") {
+          lastError = `${model} quota exceeded`;
+          continue;
+        }
+        throw new Error(data.error?.message || `Gemini error on ${model}`);
+      }
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return text;
+    } catch(e) {
+      if (e.message?.includes("quota") || e.message?.includes("RESOURCE_EXHAUSTED")) {
+        lastError = e.message;
+        continue;
+      }
+      throw e;
     }
-  );
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || "Gemini API error");
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  }
+  throw new Error(`All Gemini models quota exceeded. ${lastError}`);
 }
 
 async function callAI(prompt, aiProvider, geminiKey) {
@@ -513,13 +542,18 @@ export default function LyricMotion() {
         ))}
       </div>
       {aiProvider === "gemini" && (
-        <input
-          value={geminiKey}
-          onChange={e => setGeminiKey(e.target.value)}
-          placeholder="Paste Gemini API key (aistudio.google.com)"
-          type="password"
-          style={{ ...inputStyle(), width: "100%", boxSizing: "border-box" }}
-        />
+        <div>
+          <input
+            value={geminiKey}
+            onChange={e => setGeminiKey(e.target.value)}
+            placeholder="Paste Gemini API key (aistudio.google.com)"
+            type="password"
+            style={{ ...inputStyle(), width: "100%", boxSizing: "border-box" }}
+          />
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 6 }}>
+            ℹ Auto-tries: Gemini 2.5 Flash → 1.5 Flash → 2.0 Flash Lite → 2.0 Flash (quota fallback)
+          </div>
+        </div>
       )}
       {aiProvider === "claude" && (
         <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 8 }}>

@@ -452,11 +452,31 @@ export default function LyricMotion() {
   const handleEmbedUrl = () => {
     if (!urlInput.trim()) return;
     if (urlInput.includes("youtube.com") || urlInput.includes("youtu.be")) {
-      const id = urlInput.match(/(?:v=|youtu\.be\/)([^&\s]+)/)?.[1];
-      if (id) { setEmbedUrl(`https://www.youtube.com/embed/${id}?enablejsapi=1`); setAudioType("youtube"); notify("YouTube embedded ✓","success"); }
+      // Extract video ID robustly — handles v=, youtu.be/, shorts/, live/, playlist params
+      const patterns = [
+        /[?&]v=([a-zA-Z0-9_-]{11})/,
+        /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+        /\/shorts\/([a-zA-Z0-9_-]{11})/,
+        /\/live\/([a-zA-Z0-9_-]{11})/,
+        /\/embed\/([a-zA-Z0-9_-]{11})/,
+      ];
+      let id = null;
+      for (const p of patterns) {
+        const m = urlInput.match(p);
+        if (m) { id = m[1]; break; }
+      }
+      if (id) {
+        const embedSrc = `https://www.youtube-nocookie.com/embed/${id}?enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}&rel=0`;
+        setEmbedUrl(embedSrc);
+        setAudioType("youtube");
+        notify("YouTube embedded ✓", "success");
+      } else {
+        notify("Could not extract video ID from URL", "error");
+      }
     } else if (urlInput.includes("soundcloud.com")) {
-      setEmbedUrl(`https://w.soundcloud.com/player/?url=${encodeURIComponent(urlInput)}&auto_play=false`);
-      setAudioType("soundcloud"); notify("SoundCloud embedded ✓","success");
+      setEmbedUrl(`https://w.soundcloud.com/player/?url=${encodeURIComponent(urlInput)}&auto_play=false&color=%23a8dadc`);
+      setAudioType("soundcloud");
+      notify("SoundCloud embedded ✓", "success");
     }
   };
 
@@ -871,7 +891,15 @@ export default function LyricMotion() {
                 </div>
                 {embedUrl && (
                   <div style={{ marginTop:14,borderRadius:10,overflow:"hidden",border:"1px solid rgba(255,255,255,0.1)" }}>
-                    <iframe src={embedUrl} width="100%" height={audioType==="youtube"?200:120} frameBorder="0" allow="autoplay" style={{ display:"block" }} />
+                    <iframe
+                      src={embedUrl}
+                      width="100%"
+                      height={audioType==="youtube" ? 220 : 120}
+                      frameBorder="0"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      style={{ display:"block" }}
+                    />
                   </div>
                 )}
                 <div style={{ marginTop:10,padding:"8px 12px",background:"rgba(255,255,255,0.04)",borderRadius:8,fontSize:12,color:"rgba(255,255,255,0.4)" }}>

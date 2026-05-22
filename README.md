@@ -27,7 +27,7 @@ npm run dev
 | API | Cost | Where to get |
 |-----|------|--------------|
 | **Anthropic (Claude)** | Paid | [console.anthropic.com](https://console.anthropic.com) |
-| **Pexels** | Free | [pexels.com/api](https://www.pexels.com/api/) |
+| **Pixabay** | Free | [pixabay.com/api](https://pixabay.com/api/) |
 
 > Claude API key is handled via the Anthropic proxy in the artifact environment.  
 > For standalone deployment, add your key to a `.env` file:

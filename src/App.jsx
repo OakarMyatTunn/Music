@@ -147,18 +147,18 @@ ${text.slice(0, 300)}`
 }
 
 // ── Pexels Video ───────────────────────────────────────────────────────────
-async function fetchPexelsVideo(mood, apiKey) {
+async function fetchPixabayVideo(mood, apiKey) {
   const query = MOOD_QUERIES[mood] || MOOD_QUERIES.default;
   const res = await fetch(
-    `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=5&orientation=landscape`,
-    { headers: { Authorization: apiKey } }
+    `https://pixabay.com/api/videos/?key=${apiKey}&q=${encodeURIComponent(query)}&per_page=5&video_type=film`
   );
+  if (!res.ok) throw new Error(`Pixabay error: ${res.status}`);
   const data = await res.json();
-  const videos = data.videos || [];
-  if (!videos.length) return null;
-  const vid = videos[Math.floor(Math.random() * videos.length)];
-  const file = vid.video_files?.find(f => f.quality === "hd" || f.quality === "sd");
-  return file?.link || null;
+  const hits = data.hits || [];
+  if (!hits.length) return null;
+  const vid = hits[Math.floor(Math.random() * hits.length)];
+  // Pick medium or small quality
+  return vid.videos?.medium?.url || vid.videos?.small?.url || null;
 }
 
 // ── Canvas Renderer ────────────────────────────────────────────────────────
@@ -451,9 +451,13 @@ export default function LyricMotion() {
   const handleFetchVideo = async () => {
     if (!pexelsKey.trim()) { notify("Enter Pexels API key", "error"); return; }
     setIsFetchingVideo(true);
-    const url = await fetchPexelsVideo(mood, pexelsKey);
-    if (url) { setVideoSrc(url); notify("Background video loaded ✓", "success"); }
-    else notify("No video found. Try different mood.", "error");
+    try {
+      const url = await fetchPixabayVideo(mood, pexelsKey);
+      if (url) { setVideoSrc(url); notify("Background video loaded ✓", "success"); }
+      else notify("No videos found for this mood. Try another.", "error");
+    } catch(e) {
+      notify(`Video load failed: ${e.message}`, "error");
+    }
     setIsFetchingVideo(false);
   };
 
@@ -833,7 +837,7 @@ export default function LyricMotion() {
               <input
                 value={pexelsKey}
                 onChange={e => setPexelsKey(e.target.value)}
-                placeholder="Pexels API key (free at pexels.com/api)"
+                placeholder="Pixabay API key (free at pixabay.com/api)"
                 type="password"
                 style={{ ...inputStyle(colors), flex: 1 }}
               />

@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const PEXELS_API_KEY = ""; // User must add their free Pexels API key
+const PEXELS_API_KEY = "pZNvRFUYuazAGVnmk2IVHRRBkLY9CjY2JSYGESATibDjFA10lcrSr9aY";
+const PIXABAY_API_KEY = "55976531-21d0e7d4951ebb9b7bc9af25b";
 const ANTHROPIC_PROXY = "https://api.anthropic.com/v1/messages";
 
 const MOOD_QUERIES = {
@@ -146,7 +147,22 @@ ${text.slice(0, 300)}`
   } catch { return { language: "Unknown", code: "?", mood: "default" }; }
 }
 
-// ── Pexels Video ───────────────────────────────────────────────────────────
+// ── Video Sources ─────────────────────────────────────────────────────────
+async function fetchPexelsVideo(mood, apiKey) {
+  const query = MOOD_QUERIES[mood] || MOOD_QUERIES.default;
+  const res = await fetch(
+    `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=5&orientation=landscape`,
+    { headers: { Authorization: apiKey } }
+  );
+  if (!res.ok) throw new Error(`Pexels error: ${res.status}`);
+  const data = await res.json();
+  const videos = data.videos || [];
+  if (!videos.length) return null;
+  const vid = videos[Math.floor(Math.random() * videos.length)];
+  const file = vid.video_files?.find(f => f.quality === "hd") || vid.video_files?.[0];
+  return file?.link || null;
+}
+
 async function fetchPixabayVideo(mood, apiKey) {
   const query = MOOD_QUERIES[mood] || MOOD_QUERIES.default;
   const res = await fetch(
@@ -157,7 +173,6 @@ async function fetchPixabayVideo(mood, apiKey) {
   const hits = data.hits || [];
   if (!hits.length) return null;
   const vid = hits[Math.floor(Math.random() * hits.length)];
-  // Pick medium or small quality
   return vid.videos?.medium?.url || vid.videos?.small?.url || null;
 }
 
@@ -355,7 +370,7 @@ export default function LyricMotion() {
   const [showLangs, setShowLangs] = useState(["my"]);
   const [isTranslating, setIsTranslating] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
-  const [pexelsKey, setPexelsKey] = useState("");
+  const [videoSource, setVideoSource] = useState("pixabay"); // "pexels" | "pixabay"
   const [anthropicKey, setAnthropicKey] = useState("");
   const [videoSrc, setVideoSrc] = useState(null);
   const [isFetchingVideo, setIsFetchingVideo] = useState(false);
@@ -449,14 +464,29 @@ export default function LyricMotion() {
   };
 
   const handleFetchVideo = async () => {
-    if (!pexelsKey.trim()) { notify("Enter Pexels API key", "error"); return; }
     setIsFetchingVideo(true);
     try {
-      const url = await fetchPixabayVideo(mood, pexelsKey);
-      if (url) { setVideoSrc(url); notify("Background video loaded ✓", "success"); }
+      let url = null;
+      if (videoSource === "pexels") {
+        url = await fetchPexelsVideo(mood, PEXELS_API_KEY);
+        if (!url) throw new Error("Pexels: no results, trying Pixabay...");
+      } else {
+        url = await fetchPixabayVideo(mood, PIXABAY_API_KEY);
+      }
+      if (url) { setVideoSrc(url); notify(`Video loaded via ${videoSource} ✓`, "success"); }
       else notify("No videos found for this mood. Try another.", "error");
     } catch(e) {
-      notify(`Video load failed: ${e.message}`, "error");
+      // Auto-fallback to Pixabay if Pexels fails
+      if (videoSource === "pexels") {
+        notify("Pexels pending approval — falling back to Pixabay...", "info");
+        try {
+          const url = await fetchPixabayVideo(mood, PIXABAY_API_KEY);
+          if (url) { setVideoSrc(url); notify("Video loaded via Pixabay (fallback) ✓", "success"); }
+          else notify("No videos found. Try different mood.", "error");
+        } catch(e2) { notify(`Failed: ${e2.message}`, "error"); }
+      } else {
+        notify(`Video load failed: ${e.message}`, "error");
+      }
     }
     setIsFetchingVideo(false);
   };
@@ -832,17 +862,45 @@ export default function LyricMotion() {
         {/* STEP 4: Preview & Export */}
         {step === 4 && (
           <Section title="Step 4 — Preview & Export" subtitle="Watch and download your video" colors={colors}>
-            {/* Pexels key */}
-            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-              <input
-                value={pexelsKey}
-                onChange={e => setPexelsKey(e.target.value)}
-                placeholder="Pixabay API key (free at pixabay.com/api)"
-                type="password"
-                style={{ ...inputStyle(colors), flex: 1 }}
-              />
+            {/* Video source toggle */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>
+                🎬 Background Video Source
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <label style={{
+                  flex: 1, padding: "12px 16px", borderRadius: 10, cursor: "pointer",
+                  background: videoSource === "pixabay" ? `${colors.primary}20` : "rgba(255,255,255,0.04)",
+                  border: `2px solid ${videoSource === "pixabay" ? colors.primary : "rgba(255,255,255,0.1)"}`,
+                  display: "flex", flexDirection: "column", gap: 4, transition: "all 0.15s",
+                }}>
+                  <input type="radio" name="videoSource" value="pixabay"
+                    checked={videoSource === "pixabay"}
+                    onChange={() => setVideoSource("pixabay")}
+                    style={{ display: "none" }} />
+                  <div style={{ fontWeight: 700, fontSize: 14, color: videoSource === "pixabay" ? colors.accent : "rgba(255,255,255,0.7)" }}>
+                    ✅ Pixabay
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Ready to use · Free</div>
+                </label>
+                <label style={{
+                  flex: 1, padding: "12px 16px", borderRadius: 10, cursor: "pointer",
+                  background: videoSource === "pexels" ? `${colors.primary}20` : "rgba(255,255,255,0.04)",
+                  border: `2px solid ${videoSource === "pexels" ? colors.primary : "rgba(255,255,255,0.1)"}`,
+                  display: "flex", flexDirection: "column", gap: 4, transition: "all 0.15s",
+                }}>
+                  <input type="radio" name="videoSource" value="pexels"
+                    checked={videoSource === "pexels"}
+                    onChange={() => setVideoSource("pexels")}
+                    style={{ display: "none" }} />
+                  <div style={{ fontWeight: 700, fontSize: 14, color: videoSource === "pexels" ? colors.accent : "rgba(255,255,255,0.7)" }}>
+                    🕐 Pexels
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Pending approval · Auto-fallback to Pixabay</div>
+                </label>
+              </div>
               <Btn onClick={handleFetchVideo} colors={colors} disabled={isFetchingVideo}>
-                {isFetchingVideo ? "Loading..." : "Load Video"}
+                {isFetchingVideo ? "Loading..." : `Load Video from ${videoSource === "pexels" ? "Pexels" : "Pixabay"}`}
               </Btn>
             </div>
 

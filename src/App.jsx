@@ -866,17 +866,23 @@ export default function LyricMotion() {
             {activeTab === "mp3" && (
               <div>
                 <label style={{
-                  display: "block", border: `2px dashed ${colors.primary}40`,
-                  borderRadius: 12, padding: "40px 24px", textAlign: "center", cursor: "pointer",
+                  display:"block", border:`2px dashed ${colors.primary}40`,
+                  borderRadius:12, padding:"40px 24px", textAlign:"center", cursor:"pointer",
                   background: audioSrc ? `${colors.primary}10` : "transparent",
                 }}>
-                  <input type="file" accept="audio/*" onChange={handleMp3Upload} style={{ display: "none" }} />
-                  <div style={{ fontSize: 32, marginBottom: 10 }}>🎵</div>
-                  <div style={{ fontSize: 14, color: "rgba(255,255,255,0.6)" }}>
-                    {audioSrc ? "✓ MP3 loaded — click to change" : "Click or drag MP3 here"}
+                  <input type="file" accept="audio/*,video/*" onChange={handleMp3Upload} style={{ display:"none" }} />
+                  <div style={{ fontSize:32, marginBottom:10 }}>🎵</div>
+                  <div style={{ fontSize:14, color:"rgba(255,255,255,0.6)" }}>
+                    {audioSrc ? "✓ Audio loaded — click to change" : "Click or drag MP3 / MP4 / WAV here"}
+                  </div>
+                  <div style={{ fontSize:11, color:"rgba(255,255,255,0.3)", marginTop:6 }}>
+                    Supports MP3, MP4, WAV, M4A, OGG
                   </div>
                 </label>
-                {audioSrc && <audio ref={audioRef} src={audioSrc} controls style={{ width:"100%",marginTop:14,borderRadius:8,filter:"invert(1) hue-rotate(180deg)" }} />}
+                {audioSrc && (
+                  <audio ref={audioRef} src={audioSrc} controls
+                    style={{ width:"100%",marginTop:14,borderRadius:8,filter:"invert(1) hue-rotate(180deg)" }} />
+                )}
               </div>
             )}
 
@@ -889,21 +895,40 @@ export default function LyricMotion() {
                     onKeyDown={e=>e.key==="Enter"&&handleEmbedUrl()} />
                   <Btn onClick={handleEmbedUrl} colors={colors}>Load</Btn>
                 </div>
-                {embedUrl && (
-                  <div style={{ marginTop:14,borderRadius:10,overflow:"hidden",border:"1px solid rgba(255,255,255,0.1)" }}>
-                    <iframe
-                      src={embedUrl}
-                      width="100%"
-                      height={audioType==="youtube" ? 220 : 120}
-                      frameBorder="0"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                      style={{ display:"block" }}
-                    />
+
+                {/* Show link card instead of broken iframe */}
+                {embedUrl && audioType==="youtube" && (
+                  <div style={{
+                    marginTop:14, padding:"16px", borderRadius:10,
+                    background:"rgba(255,0,0,0.08)", border:"1px solid rgba(255,0,0,0.2)",
+                    display:"flex", alignItems:"center", gap:14,
+                  }}>
+                    <div style={{ fontSize:32 }}>▶</div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:14, fontWeight:700, color:"#fff", marginBottom:4 }}>YouTube URL loaded</div>
+                      <div style={{ fontSize:12, color:"rgba(255,255,255,0.5)", wordBreak:"break-all" }}>{urlInput.slice(0,60)}...</div>
+                      <a href={urlInput} target="_blank" rel="noreferrer"
+                        style={{ fontSize:12, color:colors.accent, marginTop:4, display:"block" }}>
+                        Open on YouTube →
+                      </a>
+                    </div>
                   </div>
                 )}
-                <div style={{ marginTop:10,padding:"8px 12px",background:"rgba(255,255,255,0.04)",borderRadius:8,fontSize:12,color:"rgba(255,255,255,0.4)" }}>
-                  ℹ MP4 export will be canvas-only. Merge audio in CapCut for final video.
+
+                {embedUrl && audioType==="soundcloud" && (
+                  <div style={{ marginTop:14,borderRadius:10,overflow:"hidden",border:"1px solid rgba(255,255,255,0.1)" }}>
+                    <iframe src={embedUrl} width="100%" height={120} frameBorder="0" allow="autoplay" style={{ display:"block" }} />
+                  </div>
+                )}
+
+                <div style={{
+                  marginTop:12, padding:"12px 14px",
+                  background:"rgba(255,165,0,0.08)", border:"1px solid rgba(255,165,0,0.2)",
+                  borderRadius:8, fontSize:12, color:"rgba(255,255,255,0.5)", lineHeight:1.6,
+                }}>
+                  ⚠️ <strong style={{ color:"rgba(255,200,100,0.9)" }}>For best results:</strong> Download the MP3 from YouTube and upload it using the MP3 tab.<br/>
+                  YouTube embeds can't be exported with audio due to browser security restrictions.<br/>
+                  <span style={{ opacity:0.7 }}>Tip: Use <strong>yt-dlp</strong>, <strong>cobalt.tools</strong>, or <strong>y2mate.com</strong> to get the MP3.</span>
                 </div>
               </div>
             )}
@@ -1151,7 +1176,7 @@ export default function LyricMotion() {
 
               {/* Offline export button — PRIMARY */}
               <Btn onClick={handleOfflineExport} colors={colors} disabled={isExporting || !audioSrc} variant="solid">
-                {isExporting ? `⏳ Exporting...` : `🎬 Export ${exportFormat.toUpperCase()} with Audio (No Playback)`}
+                {isExporting ? "⏳ Exporting..." : `🎬 Export ${exportFormat === "mp4" ? "MP4" : "WebM"} with Audio (No Playback)`}
               </Btn>
 
               {/* Progress bar */}
